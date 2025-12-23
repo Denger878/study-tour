@@ -1,3 +1,31 @@
+/* ==================== CANVAS SETUP ==================== */
+const canvas = document.getElementById('landscapesCanvas');
+const ctx = canvas.getContext('2d');
+
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+const landscapes = [
+  'landscapes/lofoten_islands.jpg',
+  'landscapes/benagil_cave.jpg',
+  'landscapes/yellowstone.jpg'
+];
+
+const randomLandscape = landscapes[Math.floor(Math.random() * landscapes.length)];
+
+const landscapeImage = new Image();
+landscapeImage.src = randomLandscape;
+
+landscapeImage.onload = function() {
+  console.log('Loaded:', randomLandscape);
+  ctx.drawImage(landscapeImage, 0, 0, canvas.width, canvas.height);
+};
+
+landscapeImage.onerror = function() {
+  console.error('Failed to load:', randomLandscape);
+};
+
+/* ==================== CONSTANTS ==================== */
 const timeButton = document.getElementById('timeButton')
 const pauseButton = document.getElementById('pauseButton')
 const inputBox = document.querySelector('.input');
@@ -12,6 +40,8 @@ let inputValue = 0;
 let remainingSeconds = 0;
 let countdownInterval = null;
 let inFinalMinute = false
+
+/* ==================== TIMER LOGIC ==================== */
 
 /* --------------------TITLE SCREEN-------------------- */
 
@@ -40,6 +70,7 @@ startButton.addEventListener('click', function() {
         inputScreen.style.display = 'none';
         clockScreen.style.display = 'flex';
         document.body.style.backgroundImage = 'none';
+        canvas.style.display = 'block';
         remainingSeconds = inputValue * 60;
         clockStudyTime.textContent = secondsToTime(remainingSeconds);
     }
@@ -144,3 +175,8 @@ function startCountdown() {
 
 updateClock();
 setInterval(updateClock, 1000);
+
+/* ==================== PIXEL REVEAL ==================== */
+
+
+/* ==================== INITIALIZATION ==================== */
