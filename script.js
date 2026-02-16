@@ -52,9 +52,8 @@
     imageData: null,
     currentImageData: null
   };
-
-  const randomIndex = Math.floor(Math.random() * 5);
-  const landscapeImage = LOCAL_LANDSCAPES[randomIndex];
+  
+  const landscapeImage = new Image();
   landscapeImage.crossOrigin = 'anonymous';
 
   /* -------------------- UTILITY FUNCTIONS -------------------- */
