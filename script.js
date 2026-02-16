@@ -156,22 +156,9 @@
 
   /* -------------------- IMAGE LOADING -------------------- */
 
-  async function loadRandomLandscape() {
-    try {
-      const response = await fetch(CONFIG.API_URL);
-      const data = await response.json();
-
-      if (data.success) {
-        state.currentImageData = data.data;
-        landscapeImage.src = data.data.imageUrl;
-      } else {
-        fallbackToLocalImage();
-      }
-    } catch (error) {
-      console.error('Failed to fetch from API:', error);
-      fallbackToLocalImage();
-    }
-  }
+  function loadRandomLandscape() {
+    fallbackToLocalImage();
+  } 
 
   function fallbackToLocalImage() {
     const randomLandscape = LOCAL_LANDSCAPES[Math.floor(Math.random() * LOCAL_LANDSCAPES.length)];
