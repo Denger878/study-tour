@@ -16,11 +16,11 @@
   };
 
   const LOCAL_LANDSCAPES = [
-    { path: 'landscapes/lofoten_islands.jpg', caption: 'Lofoten Islands, Norway' },
-    { path: 'landscapes/benagil_cave.jpg', caption: 'Benagil Cave, Portugal' },
-    { path: 'landscapes/yellowstone.jpg', caption: 'Yellowstone, United States' },
-    { path: 'landscapes/great_wall_of_china.jpg', caption: 'Great Wall of China, China' },
-    { path: 'landscapes/ben_gioc.jpg', caption: 'Ban Gioc Waterfall, Vietnam' }
+    { path: 'backup-landscapes/lofoten_islands.jpg', caption: 'Lofoten Islands, Norway' },
+    { path: 'backup-landscapes/benagil_cave.jpg', caption: 'Benagil Cave, Portugal' },
+    { path: 'backup-landscapes/yellowstone.jpg', caption: 'Yellowstone, United States' },
+    { path: 'backup-landscapes/great_wall_of_china.jpg', caption: 'Great Wall of China, China' },
+    { path: 'backup-landscapes/ben_gioc.jpg', caption: 'Ban Gioc Waterfall, Vietnam' }
   ];
 
   /* -------------------- DOM ELEMENTS -------------------- */
@@ -52,7 +52,7 @@
     imageData: null,
     currentImageData: null
   };
-  
+
   const landscapeImage = new Image();
   landscapeImage.crossOrigin = 'anonymous';
 
@@ -156,9 +156,22 @@
 
   /* -------------------- IMAGE LOADING -------------------- */
 
-  function loadRandomLandscape() {
-    fallbackToLocalImage();
-  } 
+  async function loadRandomLandscape() {
+    try {
+      const response = await fetch(CONFIG.API_URL);
+      const data = await response.json();
+
+      if (data.success) {
+        state.currentImageData = data.data;
+        landscapeImage.src = data.data.imageUrl;
+      } else {
+        fallbackToLocalImage();
+      }
+    } catch (error) {
+      console.error('Failed to fetch from API:', error);
+      fallbackToLocalImage();
+    }
+  }
 
   function fallbackToLocalImage() {
     const randomLandscape = LOCAL_LANDSCAPES[Math.floor(Math.random() * LOCAL_LANDSCAPES.length)];
