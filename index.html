@@ -4,11 +4,19 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Study Tour</title>
+  <meta name="description" content="A study timer that rewards focus by gradually revealing a landscape photo from around the world.">
+  <link rel="canonical" href="https://studytours.vercel.app/">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Study Tour">
+  <meta property="og:description" content="A study timer that rewards focus by gradually revealing a landscape photo from around the world.">
+  <meta property="og:url" content="https://studytours.vercel.app/">
+  <meta property="og:image" content="https://studytours.vercel.app/images/clock.png">
+  <meta name="twitter:card" content="summary_large_image">
   <link rel="icon" type="image/png" href="images/favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Caveat:wght@400;700&family=Inter:wght@600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@600&display=swap" rel="stylesheet">
-  <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap" rel="stylesheet">
-  <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;700&display=swap" rel="stylesheet">
 </head>
 <body>
   <main>
@@ -16,14 +24,14 @@
 
     <section class="inputScreen">
       <h2 class="title">Study Tour</h2>
-      <input class="input" placeholder="Enter Minutes">
+      <input class="input" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" placeholder="Enter Minutes" aria-label="Study minutes">
       <p id="titleStudyTime" class="studyTime">0:00</p>
       <button id="plus30" class="button">+30 min</button>
       <button id="startButton" class="button">Start</button>
     </section>
 
     <section class="clock">
-      <button id="timeButton">19 : 25 : 37</button>
+      <button id="timeButton" title="Hide clock"></button>
       <p id="studyTime">0:00</p>
       <button id="pauseButton" class="button">Start</button>
     </section>

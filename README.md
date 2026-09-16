@@ -2,7 +2,7 @@
 
 A study timer that motivates you to finish your sessions by progressively revealing stunning landscape photographs.
 
-**[Live Demo](https://study-tour-rho.vercel.app)**
+**[Live Demo](https://studytours.vercel.app)**
 
 ## About
 
@@ -14,6 +14,7 @@ Study Tour gamifies focus sessions by displaying a heavily pixelated landscape i
 - **Customizable duration** — Set any study length or use +30 minute increments
 - **Fullscreen mode** — Press `F` for distraction-free studying
 - **Location reveal** — Discover where each landscape was photographed
+- **Offline fallback** — Bundled backup landscapes load if the API is unreachable
 - **Minimal UI** — Clean interface that stays out of your way
 
 ## Tech Stack
@@ -21,7 +22,8 @@ Study Tour gamifies focus sessions by displaying a heavily pixelated landscape i
 - Vanilla JavaScript
 - HTML5 Canvas for pixel manipulation
 - CSS with glassmorphism effects
-- [Landscape Data Pipeline API](https://github.com/Denger878/landscape-data-pipeline) for image data
+- [Landscape Data Pipeline API](https://github.com/Denger878/landscape-data-pipeline) (`https://landscape-data-pipeline.vercel.app/api/random`) for image data
+- Deployed on Vercel
 
 ## How It Works
 
@@ -38,16 +40,21 @@ Study Tour gamifies focus sessions by displaying a heavily pixelated landscape i
 git clone https://github.com/Denger878/study-tour.git
 cd study-tour
 
-# Open in browser
-open index.html
+# Serve locally (the canvas needs an http:// origin to read the backup images)
+python3 -m http.server 8000
+open http://localhost:8000
 ```
 
-For full functionality, run the [Landscape Data Pipeline API](https://github.com/Denger878/landscape-data-pipeline) locally or update `script.js` to point to the deployed API.
+The app fetches images from the deployed API by default. To use a local copy of the [Landscape Data Pipeline API](https://github.com/Denger878/landscape-data-pipeline), change `CONFIG.API_URL` in `script.js`. If the API is unreachable or takes longer than 5 seconds, the app falls back to the images in `backup-landscapes/`.
 
 ## Screenshots
 
 ![Study Tour Timer](images/title.png)
 ![Study Tour Timer](images/clock.png)
+
+## Credits
+
+Landscape photos come from [Unsplash](https://unsplash.com/?utm_source=study_tour&utm_medium=referral). The photographer is credited on screen when each photo is revealed.
 
 ## License
 

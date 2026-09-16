@@ -5,12 +5,15 @@
 
   /* -------------------- CONFIGURATION -------------------- */
   const CONFIG = {
-    API_URL: 'https://landscape-data-pipeline-production.up.railway.app/api/random',
+    API_URL: 'https://landscape-data-pipeline.vercel.app/api/random',
+    API_TIMEOUT: 5000,
+    UTM_SOURCE: 'study_tour',
     CANVAS_MAX_WIDTH: 1920,
     CANVAS_MAX_HEIGHT: 1080,
     PIXEL_STAGES: 16,
     MAX_BLOCK_SIZE: 256,
     MIN_BLOCK_SIZE: 8,
+    INITIAL_BLOCK_SIZE: 200,
     BLAST_DURATION: 3000,
     TRANSITION_ZONE: 150
   };
@@ -39,18 +42,23 @@
   };
 
   const ctx = elements.canvas.getContext('2d');
-  ctx.imageSmoothingEnabled = false;
 
   /* -------------------- APPLICATION STATE -------------------- */
 
   const state = {
     inputValue: 0,
     remainingSeconds: 0,
+    endTime: 0,
     lastStage: -1,
     countdownInterval: null,
     isHovering: false,
+    isRunning: false,
+    isRevealing: false,
+    isRevealed: false,
     imageData: null,
-    currentImageData: null
+    currentImageData: null,
+    loadId: 0,
+    overlayTimeouts: []
   };
 
   const landscapeImage = new Image();
@@ -74,10 +82,6 @@
     const total = parseInt(minutes) || 0;
     const hours = Math.floor(total / 60);
     const mins = total % 60;
-
-    if (hours === 0) {
-      return `0:${String(mins).padStart(2, '0')}`;
-    }
     return `${hours}:${String(mins).padStart(2, '0')}`;
   }
 
@@ -91,49 +95,110 @@
     elements.timeButton.textContent = `${hours} : ${minutes} : ${seconds}`;
   }
 
-  /* -------------------- CANVAS & PIXEL FUNCTIONS -------------------- */
-
-  function initializeCanvas() {
-    elements.canvas.width = Math.min(window.innerWidth, CONFIG.CANVAS_MAX_WIDTH);
-    elements.canvas.height = Math.min(window.innerHeight, CONFIG.CANVAS_MAX_HEIGHT);
+  function withReferral(link) {
+    try {
+      const url = new URL(link);
+      url.searchParams.set('utm_source', CONFIG.UTM_SOURCE);
+      url.searchParams.set('utm_medium', 'referral');
+      return url.toString();
+    } catch (error) {
+      return null;
+    }
   }
 
-  function getAverageColor(startX, startY, blockWidth, blockHeight, saturation = 1.0) {
+  // The API serves 1080px-wide images; request a size that fills the canvas instead.
+  function sizedImageUrl(imageUrl) {
+    try {
+      const url = new URL(imageUrl);
+      if (url.hostname === 'images.unsplash.com') {
+        url.searchParams.set('w', String(CONFIG.CANVAS_MAX_WIDTH));
+      }
+      return url.toString();
+    } catch (error) {
+      return imageUrl;
+    }
+  }
+
+  function scheduleOverlay(callback, delay) {
+    state.overlayTimeouts.push(setTimeout(callback, delay));
+  }
+
+  /* -------------------- CANVAS & PIXEL FUNCTIONS -------------------- */
+
+  function resizeCanvas() {
+    elements.canvas.width = Math.min(window.innerWidth, CONFIG.CANVAS_MAX_WIDTH);
+    elements.canvas.height = Math.min(window.innerHeight, CONFIG.CANVAS_MAX_HEIGHT);
+    ctx.imageSmoothingQuality = 'high';
+  }
+
+  function isImageReady() {
+    return landscapeImage.complete && landscapeImage.naturalWidth > 0;
+  }
+
+  // Draws the landscape scaled to cover the canvas without distorting its aspect ratio.
+  function drawLandscape() {
+    const { width, height } = elements.canvas;
+    const scale = Math.max(width / landscapeImage.naturalWidth, height / landscapeImage.naturalHeight);
+    const drawWidth = landscapeImage.naturalWidth * scale;
+    const drawHeight = landscapeImage.naturalHeight * scale;
+    ctx.drawImage(landscapeImage, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
+  }
+
+  function captureImageData() {
+    if (!isImageReady()) {
+      state.imageData = null;
+      return;
+    }
+
+    ctx.clearRect(0, 0, elements.canvas.width, elements.canvas.height);
+    drawLandscape();
+    try {
+      state.imageData = ctx.getImageData(0, 0, elements.canvas.width, elements.canvas.height);
+    } catch (error) {
+      console.error('Unable to read landscape pixels:', error);
+      state.imageData = null;
+    }
+  }
+
+  function getAverageColor(startX, startY, blockWidth, blockHeight) {
+    const { width, height } = elements.canvas;
+    const data = state.imageData.data;
     let r = 0, g = 0, b = 0, count = 0;
 
-    for (let y = startY; y < startY + blockHeight && y < elements.canvas.height; y++) {
-      for (let x = startX; x < startX + blockWidth && x < elements.canvas.width; x++) {
-        const index = (y * elements.canvas.width + x) * 4;
-        r += state.imageData.data[index];
-        g += state.imageData.data[index + 1];
-        b += state.imageData.data[index + 2];
+    for (let y = startY; y < startY + blockHeight && y < height; y++) {
+      for (let x = startX; x < startX + blockWidth && x < width; x++) {
+        const index = (y * width + x) * 4;
+        r += data[index];
+        g += data[index + 1];
+        b += data[index + 2];
         count++;
       }
     }
 
-    r = Math.floor(r / count);
-    g = Math.floor(g / count);
-    b = Math.floor(b / count);
-
-    if (saturation < 1.0) {
-      const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-      r = Math.floor(r * saturation + gray * (1 - saturation));
-      g = Math.floor(g * saturation + gray * (1 - saturation));
-      b = Math.floor(b * saturation + gray * (1 - saturation));
-    }
-
-    return `rgb(${r}, ${g}, ${b})`;
+    return `rgb(${Math.floor(r / count)}, ${Math.floor(g / count)}, ${Math.floor(b / count)})`;
   }
 
-  function drawPixelated(blockSize) {
-    ctx.clearRect(0, 0, elements.canvas.width, elements.canvas.height);
+  function drawPixelated(blockSize, context = ctx) {
+    if (!state.imageData) return;
+
+    context.clearRect(0, 0, elements.canvas.width, elements.canvas.height);
 
     for (let y = 0; y < elements.canvas.height; y += blockSize) {
       for (let x = 0; x < elements.canvas.width; x += blockSize) {
-        const color = getAverageColor(x, y, blockSize, blockSize);
-        ctx.fillStyle = color;
-        ctx.fillRect(x, y, blockSize, blockSize);
+        context.fillStyle = getAverageColor(x, y, blockSize, blockSize);
+        context.fillRect(x, y, blockSize, blockSize);
       }
+    }
+  }
+
+  function redrawCanvas() {
+    if (state.isRevealed) {
+      ctx.clearRect(0, 0, elements.canvas.width, elements.canvas.height);
+      drawLandscape();
+    } else if (state.isRunning) {
+      drawPixelated(calculateBlockSize());
+    } else {
+      drawPixelated(CONFIG.INITIAL_BLOCK_SIZE);
     }
   }
 
@@ -157,17 +222,25 @@
   /* -------------------- IMAGE LOADING -------------------- */
 
   async function loadRandomLandscape() {
-    try {
-      const response = await fetch(CONFIG.API_URL);
-      const data = await response.json();
+    const loadId = ++state.loadId;
 
-      if (data.success) {
-        state.currentImageData = data.data;
-        landscapeImage.src = data.data.imageUrl;
+    try {
+      const response = await fetch(CONFIG.API_URL, { signal: AbortSignal.timeout(CONFIG.API_TIMEOUT) });
+      if (!response.ok) {
+        throw new Error(`API responded with status ${response.status}`);
+      }
+
+      const data = await response.json();
+      if (loadId !== state.loadId) return;
+
+      if (data.success && data.data && data.data.imageUrl) {
+        state.currentImageData = { ...data.data, isRemote: true };
+        landscapeImage.src = sizedImageUrl(data.data.imageUrl);
       } else {
-        fallbackToLocalImage();
+        throw new Error(data.error || 'API returned no image');
       }
     } catch (error) {
+      if (loadId !== state.loadId) return;
       console.error('Failed to fetch from API:', error);
       fallbackToLocalImage();
     }
@@ -179,246 +252,228 @@
     state.currentImageData = {
       imageUrl: randomLandscape.path,
       caption: randomLandscape.caption,
-      photographer: { name: 'Unknown' }
+      photographer: { name: 'Unknown' },
+      isRemote: false
     };
 
     landscapeImage.src = randomLandscape.path;
   }
 
   function handleImageLoad() {
-    ctx.drawImage(landscapeImage, 0, 0, elements.canvas.width, elements.canvas.height);
-    state.imageData = ctx.getImageData(0, 0, elements.canvas.width, elements.canvas.height);
-    drawPixelated(200);
+    captureImageData();
+    redrawCanvas();
+  }
+
+  function handleImageError() {
+    if (state.currentImageData && state.currentImageData.isRemote) {
+      console.error('Failed to load API image, using a local landscape instead.');
+      fallbackToLocalImage();
+    } else {
+      console.error('Failed to load local landscape:', landscapeImage.src);
+    }
   }
 
   /* -------------------- TIMER FUNCTIONS -------------------- */
 
-  function updateStudyTime() {
-    state.inputValue = parseInt(elements.inputBox.value.trim()) || 0;
+  function setStudyMinutes(minutes) {
+    state.inputValue = Math.max(0, minutes);
+    const inputText = state.inputValue > 0 ? String(state.inputValue) : '';
+    if (elements.inputBox.value !== inputText) {
+      elements.inputBox.value = inputText;
+    }
     elements.titleStudyTime.textContent = minutesToDisplay(state.inputValue);
   }
 
-  function startTimer() {
-    if (state.inputValue <= 0) return;
-
-    elements.inputScreen.style.display = 'none';
-    elements.clockScreen.style.display = 'flex';
-    document.body.style.backgroundImage = 'none';
-    elements.canvas.style.display = 'block';
-
-    state.remainingSeconds = state.inputValue * 60;
-    elements.clockStudyTime.textContent = secondsToTime(state.remainingSeconds);
-    drawPixelated(calculateBlockSize());
+  function updateStudyTime() {
+    setStudyMinutes(parseInt(elements.inputBox.value.trim()) || 0);
   }
 
-  function startCountdown() {
-    if (state.countdownInterval) {
-      clearInterval(state.countdownInterval);
+  function startTimer() {
+    if (state.inputValue <= 0 || state.isRunning) return;
+
+    elements.inputBox.blur();
+    elements.inputScreen.style.display = 'none';
+    elements.clockScreen.style.display = 'flex';
+    document.body.classList.add('session-active');
+    elements.canvas.style.display = 'block';
+
+    state.isRunning = true;
+    state.remainingSeconds = state.inputValue * 60;
+    state.lastStage = calculateStage();
+    elements.clockStudyTime.textContent = secondsToTime(state.remainingSeconds);
+    redrawCanvas();
+  }
+
+  function tick() {
+    state.remainingSeconds = Math.max(0, Math.ceil((state.endTime - Date.now()) / 1000));
+
+    const newStage = calculateStage();
+    if (newStage !== state.lastStage) {
+      state.lastStage = newStage;
+      drawPixelated(calculateBlockSize());
     }
 
-    state.countdownInterval = setInterval(function() {
-      state.remainingSeconds--;
+    if (state.remainingSeconds <= 0) {
+      stopCountdown();
+      elements.clockStudyTime.textContent = '';
+      elements.timeButton.style.display = 'none';
+      elements.pauseButton.style.display = 'none';
+      colorBlastReveal();
+    } else {
+      elements.clockStudyTime.textContent = secondsToTime(state.remainingSeconds);
+    }
+  }
 
-      if (state.remainingSeconds <= 0) {
-        clearInterval(state.countdownInterval);
-        elements.clockStudyTime.textContent = '';
-        elements.timeButton.style.display = 'none';
-        elements.pauseButton.style.display = 'none';
-        colorBlastReveal();
-      } else {
-        elements.clockStudyTime.textContent = secondsToTime(state.remainingSeconds);
-      }
+  // Counts down against a fixed end time so the timer stays accurate in throttled background tabs.
+  function startCountdown() {
+    stopCountdown();
+    state.endTime = Date.now() + state.remainingSeconds * 1000;
+    state.countdownInterval = setInterval(tick, 250);
+  }
 
-      const newStage = calculateStage();
-      if (newStage !== state.lastStage) {
-        state.lastStage = newStage;
-        drawPixelated(calculateBlockSize());
-      }
-    }, 1000);
+  function stopCountdown() {
+    clearInterval(state.countdownInterval);
+    state.countdownInterval = null;
   }
 
   /* -------------------- REVEAL ANIMATION -------------------- */
 
   function colorBlastReveal() {
-    elements.clockScreen.style.background = 'transparent';
-    elements.clockScreen.style.backdropFilter = 'none';
-    elements.clockScreen.style.webkitBackdropFilter = 'none';
-    elements.clockScreen.style.border = 'none';
-    elements.clockScreen.style.boxShadow = 'none';
+    state.isRevealing = true;
+    elements.clockScreen.classList.add('revealed');
 
-    const startTime = Date.now();
+    if (!state.imageData) {
+      finishReveal();
+      return;
+    }
 
-    function animateBlast() {
-      const elapsed = Date.now() - startTime;
-      const blastProgress = Math.min(1, elapsed / CONFIG.BLAST_DURATION);
+    // Render the finest pixelation once instead of re-averaging every block on every frame.
+    const pixelatedFrame = document.createElement('canvas');
+    pixelatedFrame.width = elements.canvas.width;
+    pixelatedFrame.height = elements.canvas.height;
+    drawPixelated(CONFIG.MIN_BLOCK_SIZE, pixelatedFrame.getContext('2d'));
+
+    const startTime = performance.now();
+
+    function animateBlast(now) {
+      const { width, height } = elements.canvas;
+      const blastProgress = Math.min(1, (now - startTime) / CONFIG.BLAST_DURATION);
       const easedProgress = 1 - Math.pow(1 - blastProgress, 2);
-      const wavePosition = easedProgress * (elements.canvas.width + CONFIG.TRANSITION_ZONE);
+      const wavePosition = easedProgress * (width + CONFIG.TRANSITION_ZONE);
 
-      ctx.clearRect(0, 0, elements.canvas.width, elements.canvas.height);
-
-      const blockSize = CONFIG.MIN_BLOCK_SIZE;
-      for (let y = 0; y < elements.canvas.height; y += blockSize) {
-        for (let x = 0; x < elements.canvas.width; x += blockSize) {
-          const color = getAverageColor(x, y, blockSize, blockSize);
-          ctx.fillStyle = color;
-          ctx.fillRect(x, y, blockSize, blockSize);
-        }
-      }
+      ctx.clearRect(0, 0, width, height);
+      ctx.drawImage(pixelatedFrame, 0, 0, width, height);
 
       if (wavePosition > 0) {
         ctx.save();
         ctx.beginPath();
-        ctx.rect(0, 0, Math.max(0, wavePosition), elements.canvas.height);
+        ctx.rect(0, 0, wavePosition, height);
         ctx.clip();
-        ctx.drawImage(landscapeImage, 0, 0, elements.canvas.width, elements.canvas.height);
+        drawLandscape();
         ctx.restore();
 
-        if (wavePosition < elements.canvas.width + CONFIG.TRANSITION_ZONE) {
-          const gradient = ctx.createLinearGradient(
-            wavePosition - CONFIG.TRANSITION_ZONE, 0,
-            wavePosition, 0
-          );
+        if (wavePosition < width + CONFIG.TRANSITION_ZONE) {
+          const gradient = ctx.createLinearGradient(wavePosition - CONFIG.TRANSITION_ZONE, 0, wavePosition, 0);
           gradient.addColorStop(0, 'rgba(255, 255, 255, 0)');
           gradient.addColorStop(1, 'rgba(255, 255, 255, 0.6)');
           ctx.fillStyle = gradient;
-          ctx.fillRect(wavePosition - CONFIG.TRANSITION_ZONE, 0, CONFIG.TRANSITION_ZONE, elements.canvas.height);
+          ctx.fillRect(wavePosition - CONFIG.TRANSITION_ZONE, 0, CONFIG.TRANSITION_ZONE, height);
         }
       }
 
-      if (blastProgress < 1) {
+      if (blastProgress < 1 && state.isRevealing) {
         requestAnimationFrame(animateBlast);
-      } else {
-        ctx.clearRect(0, 0, elements.canvas.width, elements.canvas.height);
-        ctx.drawImage(landscapeImage, 0, 0, elements.canvas.width, elements.canvas.height);
-        showLocationCaption();
+      } else if (state.isRevealing) {
+        finishReveal();
       }
     }
 
     requestAnimationFrame(animateBlast);
   }
 
+  function finishReveal() {
+    state.isRevealing = false;
+    state.isRevealed = true;
+    state.isRunning = false;
+    redrawCanvas();
+    showRevealOverlays();
+  }
+
   /* -------------------- UI OVERLAYS -------------------- */
 
-  function showLocationCaption() {
-    if (!state.currentImageData || !state.currentImageData.caption) {
-      setTimeout(showRestartPrompt, 2000);
-      return;
-    }
+  function createOverlay(id) {
+    const overlay = document.createElement('div');
+    overlay.id = id;
+    overlay.className = 'overlay';
+    document.body.appendChild(overlay);
+    scheduleOverlay(() => overlay.classList.add('visible'), 100);
+    return overlay;
+  }
 
-    const caption = document.createElement('div');
-    caption.id = 'locationCaption';
+  function showRevealOverlays() {
+    const hasCaption = showLocationCaption();
+    showPhotoCredit();
+    scheduleOverlay(showRestartPrompt, hasCaption ? 4000 : 2000);
+  }
+
+  function showLocationCaption() {
+    if (!state.currentImageData || !state.currentImageData.caption) return false;
+
+    const caption = createOverlay('locationCaption');
     caption.textContent = `📍 ${state.currentImageData.caption}`;
 
-    Object.assign(caption.style, {
-      position: 'fixed',
-      bottom: '40px',
-      left: '40px',
-      color: 'white',
-      fontSize: '1.5rem',
-      fontFamily: "'Inter', sans-serif",
-      fontWeight: '600',
-      textShadow: '0 2px 4px rgba(0, 0, 0, 0.3)',
-      padding: '15px 25px',
-      borderRadius: '15px',
-      background: 'rgba(255, 255, 255, 0.1)',
-      backdropFilter: 'blur(12px)',
-      webkitBackdropFilter: 'blur(12px)',
-      border: '1px solid rgba(255, 255, 255, 0.2)',
-      boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)',
-      opacity: '0',
-      transform: 'translateY(10px)',
-      transition: 'opacity 1s ease, transform 1s ease, box-shadow 0.5s ease',
-      zIndex: '1000'
-    });
+    scheduleOverlay(() => caption.classList.add('glow'), 1500);
+    scheduleOverlay(() => caption.classList.remove('glow'), 2100);
+    return true;
+  }
 
-    document.body.appendChild(caption);
+  function showPhotoCredit() {
+    const image = state.currentImageData;
+    if (!image || !image.isRemote || !image.photographer || !image.photographer.name) return;
 
-    setTimeout(() => {
-      caption.style.opacity = '1';
-      caption.style.transform = 'translateY(0)';
-    }, 500);
+    const credit = createOverlay('photoCredit');
+    credit.append('Photo by ', creditLink(image.photographer.name, image.photographer.profile), ' on ', creditLink('Unsplash', image.unsplashLink));
+  }
 
-    setTimeout(() => {
-      caption.style.boxShadow = '0 8px 40px rgba(255, 255, 255, 0.4), 0 0 20px rgba(255, 255, 255, 0.3)';
-      setTimeout(() => {
-        caption.style.boxShadow = '0 8px 32px rgba(0, 0, 0, 0.3)';
-      }, 600);
-    }, 1500);
+  function creditLink(text, href) {
+    const url = href && withReferral(href);
+    if (!url) return text;
 
-    setTimeout(showRestartPrompt, 4000);
+    const link = document.createElement('a');
+    link.href = url;
+    link.textContent = text;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    return link;
   }
 
   function showRestartPrompt() {
-    const prompt = document.createElement('div');
-    prompt.id = 'restartPrompt';
+    const prompt = createOverlay('restartPrompt');
     prompt.textContent = 'Press SPACE to restart';
+    scheduleOverlay(() => prompt.classList.add('blinking'), 1600);
+  }
 
-    Object.assign(prompt.style, {
-      position: 'fixed',
-      bottom: '40px',
-      left: '50%',
-      transform: 'translate(-50%, 20px)',
-      color: 'white',
-      fontSize: '1.5rem',
-      fontFamily: "'Inter', sans-serif",
-      fontWeight: '600',
-      textShadow: '0 2px 4px rgba(0, 0, 0, 0.3)',
-      padding: '15px 35px',
-      borderRadius: '15px',
-      background: 'rgba(255, 255, 255, 0.1)',
-      backdropFilter: 'blur(12px)',
-      webkitBackdropFilter: 'blur(12px)',
-      border: '1px solid rgba(255, 255, 255, 0.2)',
-      boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)',
-      opacity: '0',
-      transition: 'opacity 1.5s ease, transform 1.5s cubic-bezier(0.25, 0.46, 0.45, 0.94)',
-      zIndex: '1000'
+  function removeOverlays() {
+    state.overlayTimeouts.forEach(clearTimeout);
+    state.overlayTimeouts = [];
+
+    ['locationCaption', 'photoCredit', 'restartPrompt'].forEach(function(id) {
+      const overlay = document.getElementById(id);
+      if (overlay) overlay.remove();
     });
-
-    document.body.appendChild(prompt);
-
-    setTimeout(() => {
-      prompt.style.opacity = '1';
-      prompt.style.transform = 'translate(-50%, 0)';
-    }, 100);
-
-    setTimeout(() => {
-      prompt.style.animation = 'blink 2s ease-in-out infinite';
-    }, 1600);
-
-    if (!document.getElementById('blinkAnimation')) {
-      const style = document.createElement('style');
-      style.id = 'blinkAnimation';
-      style.textContent = `
-        @keyframes blink {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.4; }
-        }
-      `;
-      document.head.appendChild(style);
-    }
   }
 
   /* -------------------- RESTART -------------------- */
 
   function restartTimer() {
-    const caption = document.getElementById('locationCaption');
-    const prompt = document.getElementById('restartPrompt');
-    if (caption) caption.remove();
-    if (prompt) prompt.remove();
+    removeOverlays();
+    stopCountdown();
 
     elements.clockScreen.style.display = 'none';
+    elements.clockScreen.classList.remove('revealed');
     elements.inputScreen.style.display = 'flex';
     elements.canvas.style.display = 'none';
-    document.body.style.backgroundImage = "url('images/title-screen-background.png')";
-
-    Object.assign(elements.clockScreen.style, {
-      background: 'rgba(255, 255, 255, 0.1)',
-      backdropFilter: 'blur(12px)',
-      webkitBackdropFilter: 'blur(12px)',
-      border: '1px solid rgba(255, 255, 255, 0.2)',
-      boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)'
-    });
+    document.body.classList.remove('session-active');
 
     elements.timeButton.style.visibility = 'visible';
     elements.timeButton.style.display = 'block';
@@ -426,13 +481,13 @@
     elements.pauseButton.textContent = 'Start';
     elements.pauseButton.style.opacity = '1';
 
-    state.inputValue = 0;
     state.remainingSeconds = 0;
     state.lastStage = -1;
+    state.isRunning = false;
+    state.isRevealing = false;
+    state.isRevealed = false;
 
-    elements.inputBox.value = '';
-    elements.titleStudyTime.textContent = '0:00';
-
+    setStudyMinutes(0);
     loadRandomLandscape();
     elements.inputBox.focus();
   }
@@ -440,26 +495,42 @@
   /* -------------------- EVENT LISTENERS -------------------- */
 
   function initializeEventListeners() {
-    elements.inputBox.addEventListener('keypress', function(e) {
+    elements.inputBox.addEventListener('keydown', function(e) {
       if (e.key === 'Enter') {
+        e.preventDefault();
         updateStudyTime();
-        elements.inputBox.blur();
+        startTimer();
       }
     });
 
-    elements.inputBox.addEventListener('blur', updateStudyTime);
+    elements.inputBox.addEventListener('input', updateStudyTime);
 
-    document.addEventListener('keypress', function(e) {
-      if (e.key === 'Enter' && elements.inputScreen.style.display !== 'none') {
-        if (document.activeElement !== elements.inputBox && state.inputValue > 0) {
-          startTimer();
+    document.addEventListener('keydown', function(e) {
+      const isTyping = document.activeElement === elements.inputBox;
+      const isOnControl = isTyping || document.activeElement instanceof HTMLButtonElement;
+
+      if (e.key === 'Enter' && !isOnControl && elements.inputScreen.style.display !== 'none') {
+        startTimer();
+      }
+
+      if ((e.key === ' ' || e.key === 'Spacebar') && state.isRevealed) {
+        e.preventDefault();
+        restartTimer();
+      }
+
+      if ((e.key === 'f' || e.key === 'F') && !isTyping && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        if (!document.fullscreenElement) {
+          document.documentElement.requestFullscreen().catch(console.error);
+        } else {
+          document.exitFullscreen();
         }
       }
     });
 
     elements.plus30.addEventListener('click', function() {
-      state.inputValue += 30;
-      elements.titleStudyTime.textContent = minutesToDisplay(state.inputValue);
+      if (state.isRunning) return;
+      setStudyMinutes(state.inputValue + 30);
     });
 
     elements.startButton.addEventListener('click', startTimer);
@@ -484,12 +555,13 @@
         startCountdown();
         elements.pauseButton.textContent = 'Pause';
       } else if (elements.pauseButton.textContent === 'Pause') {
-        clearInterval(state.countdownInterval);
+        stopCountdown();
         elements.pauseButton.textContent = 'Resume';
       } else {
         startCountdown();
         elements.pauseButton.textContent = 'Pause';
       }
+      elements.pauseButton.blur();
     });
 
     elements.pauseButton.addEventListener('mouseenter', function() {
@@ -504,51 +576,25 @@
       }
     });
 
-    document.addEventListener('keydown', function(e) {
-      if (e.key === ' ' || e.key === 'Spacebar') {
-        if (elements.canvas.style.display === 'block' && state.remainingSeconds === 0) {
-          e.preventDefault();
-          restartTimer();
-        }
-      }
-
-      if (e.key === 'f' || e.key === 'F') {
-        e.preventDefault();
-        if (!document.fullscreenElement) {
-          document.documentElement.requestFullscreen().catch(console.error);
-        } else {
-          document.exitFullscreen();
-        }
-      }
-    });
-
     window.addEventListener('resize', function() {
-      if (elements.canvas.style.display !== 'block') return;
-
       const oldWidth = elements.canvas.width;
       const oldHeight = elements.canvas.height;
-
-      elements.canvas.width = Math.min(window.innerWidth, CONFIG.CANVAS_MAX_WIDTH);
-      elements.canvas.height = Math.min(window.innerHeight, CONFIG.CANVAS_MAX_HEIGHT);
+      resizeCanvas();
 
       if (oldWidth !== elements.canvas.width || oldHeight !== elements.canvas.height) {
-        ctx.drawImage(landscapeImage, 0, 0, elements.canvas.width, elements.canvas.height);
-        state.imageData = ctx.getImageData(0, 0, elements.canvas.width, elements.canvas.height);
-
-        if (state.remainingSeconds > 0) {
-          drawPixelated(calculateBlockSize());
-        }
+        captureImageData();
+        if (!state.isRevealing) redrawCanvas();
       }
     });
 
-    landscapeImage.onload = handleImageLoad;
-    landscapeImage.onerror = fallbackToLocalImage;
+    landscapeImage.addEventListener('load', handleImageLoad);
+    landscapeImage.addEventListener('error', handleImageError);
   }
 
   /* -------------------- INITIALIZATION -------------------- */
 
   function init() {
-    initializeCanvas();
+    resizeCanvas();
     initializeEventListeners();
     loadRandomLandscape();
     updateRealTimeClock();
